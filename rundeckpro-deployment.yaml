@@ -1,0 +1,200 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: rudeckpro-nginx
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    #for sticky sessions
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+
+spec:
+  rules:
+  - host: localhost
+    http:
+      paths:
+      - backend:
+          serviceName: rundeckpro
+          servicePort: 8080
+        path: /
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: rundeckpro
+spec:
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 4440
+  selector:
+    app: rundeckpro
+  externalTrafficPolicy: Local
+  sessionAffinity: ClientIP
+
+---
+
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: rundeckpro
+  namespace: default
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: rundeckpro
+    spec:
+      containers:
+      - name: rundeck
+        image: rundeckpro/enterprise:SNAPSHOT
+        #args: ["-Dlogging.config=/home/rundeck/server/config/logback.groovy"]
+        volumeMounts:
+          - mountPath: /home/rundeck/etc/rundeckpro-license.key
+            name: license
+            subPath: rundeckpro-license.key
+          - mountPath: /home/rundeck/etc/admin-role.aclpolicy
+            name: acl
+            subPath: admin-role.aclpolicy
+          - mountPath: /home/rundeck/server/config/logback.groovy
+            name: logback
+            subPath: logback.groovy
+          - mountPath: /home/rundeck/server/config/log4j.properties
+            name: log4j
+            subPath: log4j.properties
+        env:
+        - name: RUNDECK_GRAILS_URL
+          value: "http://localhost"
+        - name: RUNDECK_DATABASE_DRIVER
+          value: "com.mysql.jdbc.Driver"
+        - name: RUNDECK_DATABASE_URL
+          value: "jdbc:mysql://mysql.default.svc.cluster.local:3306/rundeckdb?autoReconnect=true&useSSL=false"
+        - name: RUNDECK_DATABASE_USERNAME
+          value: "rundeck"
+        - name: RUNDECK_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-rundeckuser
+              key: password
+        #STORAGE
+        - name: RUNDECK_PLUGIN_EXECUTIONFILESTORAGE_NAME
+          value: "com.rundeck.rundeckpro.amazon-s3"
+        - name: RUNDECK_PLUGIN_EXECUTIONFILESTORAGE_S3_BUCKET
+          value: "rundeck"
+        - name: RUNDECK_PLUGIN_EXECUTIONFILESTORAGE_S3_REGION
+          value: "us-east-2"
+        - name: RUNDECK_PLUGIN_EXECUTIONFILESTORAGE_S3_ENDPOINT
+          value: "http://minio.default.svc.cluster.local:9000"
+        - name: RUNDECK_PLUGIN_EXECUTIONFILESTORAGE_S3_PATHSTYLE
+          value: "true"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: rundeckpro-log-storage
+              key: awskey
+        - name: AWS_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: rundeckpro-log-storage
+              key: awssecret
+        #HEARBEAT
+        - name: RUNDECK_PLUGIN_CLUSTER_HEARTBEAT_CONSIDERDEAD
+          value: "120"
+        - name: RUNDECK_PLUGIN_CLUSTER_AUTOTAKEOVER_SLEEP
+          value: "10"
+        #TAKEOVER
+        - name: RUNDECK_PLUGIN_CLUSTER_AUTOTAKEOVER_ENABLED
+          value: "true"
+        - name: RUNDECK_PLUGIN_CLUSTER_AUTOTAKEOVER_SLEEP
+          value: "5"
+        - name: RUNDECK_PLUGIN_CLUSTER_AUTOTAKEOVER_POLICY
+          value: "RemoteExecution"
+        #REMOTE POLICIES
+        - name: RUNDECK_PLUGIN_CLUSTER_REMOTEEXECUTION_ENABLED
+          value: "true"
+        - name: RUNDECK_PLUGIN_CLUSTER_REMOTEEXECUTION_ALLOWEDTAGS
+          value: "*"
+        - name: RUNDECK_PLUGIN_CLUSTER_REMOTEEXECUTION_PREFERREDTAGS
+          value: "linux"
+        - name: RUNDECK_STORAGE_CONVERTER_1_CONFIG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rundeckpro-storage-converter
+              key: masterpassword
+        - name: RUNDECK_CONFIG_STORAGE_CONVERTER_1_CONFIG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rundeckpro-storage-converter
+              key: masterpassword
+        #LDAP SETTINGS
+        - name: RUNDECK_JAAS_MODULES_0
+          value: "JettyCombinedLdapLoginModule"
+        - name: RUNDECK_JAAS_LDAP_PROVIDERURL
+          value: "ldap://ldap.default.svc.cluster.local:389"
+        - name: RUNDECK_JAAS_LDAP_BINDDN
+          value: "cn=admin,dc=rdtest,dc=com"
+        - name: RUNDECK_JAAS_LDAP_BINDPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ldap-password
+              key: password
+        - name: RUNDECK_JAAS_LDAP_USERBASEDN
+          value: "ou=users,dc=rdtest,dc=com"
+        - name: RUNDECK_JAAS_LDAP_ROLEBASEDN
+          value: "ou=roles,dc=rdtest,dc=com"
+        - name: RUNDECK_JAAS_LDAP_USERLASTNAMEATTRIBUTE
+          value: "sn"
+        - name: RUNDECK_JAAS_LDAP_USERFIRSTNAMEATTRIBUTE
+          value: "givenName"
+        - name: RUNDECK_JAAS_LDAP_USEREMAILATTRIBUTE
+          value: "mail"
+        - name: RUNDECK_SECURITY_SYNCLDAPUSER
+          value: "true"
+        ports:
+        - containerPort: 4440
+        livenessProbe:
+          # an http probe
+          httpGet:
+            path: /
+            port: 4440
+            scheme: HTTP
+          initialDelaySeconds: 500
+          periodSeconds: 120
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 4440
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: license
+        secret:
+          secretName: rundeckpro-license
+          items:
+          - key: rundeckpro-license.key
+            path: rundeckpro-license.key
+      - name: acl
+        secret:
+          secretName: rundeckpro-admin-acl
+          items:
+          - key: admin-role.aclpolicy
+            path: admin-role.aclpolicy
+      - name: logback
+        secret:
+          secretName: logback
+          items:
+          - key: logback.groovy
+            path: logback.groovy
+      - name: log4j
+        secret:
+          secretName: log4j
+          items:
+          - key: log4j.properties
+            path: log4j.properties

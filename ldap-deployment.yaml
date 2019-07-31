@@ -1,0 +1,60 @@
+
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  # This name uniquely identifies the Deployment
+  name: ldap
+spec:
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        # Label is used as selector in the service.
+        app: ldap
+    spec:
+      containers:
+      - name: ldap
+        image: osixia/openldap:1.2.4
+        args: ["--copy-service"]
+        env:
+          - name: LDAP_ORGANISATION
+            value: "RD Test"
+          - name: LDAP_DOMAIN
+            value: "rdtest.com"
+          - name: LDAP_ADMIN_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: ldap-password
+                key: password
+        ports:
+        - containerPort: 389
+          hostPort: 389
+        volumeMounts:
+          - mountPath: /container/service/slapd/assets/config/bootstrap/ldif/50-bootstrap.ldif
+            name: ldif
+            subPath: 50-bootstrap.ldif
+      volumes:
+      - name: ldif
+        secret:
+          secretName: bootstrap.ldif
+          items:
+          - key: 50-bootstrap.ldif
+            path: 50-bootstrap.ldif
+
+---
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ldap
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 389
+      targetPort: 389
+      protocol: TCP
+  selector:
+    app: ldap
+
