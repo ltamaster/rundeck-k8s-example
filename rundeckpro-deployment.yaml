@@ -54,7 +54,7 @@ spec:
       containers:
       - name: rundeck
         image: rundeckpro/enterprise:SNAPSHOT
-        #args: ["-Dlogging.config=/home/rundeck/server/config/logback.groovy"]
+        args: ["-Dlogging.config=/home/rundeck/server/config/logback.groovy"]
         volumeMounts:
           - mountPath: /home/rundeck/etc/rundeckpro-license.key
             name: license
